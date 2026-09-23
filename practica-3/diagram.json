@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "author": "Practica 3 SO — Marcapasos VVI Context Switch",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": 73.4,
+      "left": -96,
+      "attrs": { "color": "yellow", "bounce": "0" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": -90,
+      "left": 99.8,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 3.4,
+      "left": 95.15,
+      "rotate": 270,
+      "attrs": { "value": "220" }
+    }
+  ],
+  "connections": [
+    ["esp:TX", "$serialMonitor:RX", "", []],
+    ["esp:RX", "$serialMonitor:TX", "", []],
+    ["btn1:1.l", "esp:4", "yellow", ["h-28.8", "v144", "h249.6", "v-86.4"]],
+    ["esp:5", "r1:1", "cyan", ["h24.04", "v-129.55"]],
+    ["r1:2", "led1:A", "cyan", ["h0"]],
+    ["esp:3V3", "btn1:2.l", "red", ["h-119.81", "v-48"]],
+    ["esp:GND.2", "led1:C", "black", ["v0"]]
+  ],
+  "dependencies": {}
+}
