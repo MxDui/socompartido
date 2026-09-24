@@ -155,19 +155,19 @@ Observación: `sys_sleep_ms` es la única “syscall” que no pasa por `syscall
 
 ### Ejercicio 3 — Elevación de privilegios mediante syscalls (t = 500 ms)
 
-Condición inicial: `vvi_task` Blocked (retardo), `diag_task` Running, `kernel_task` Blocked en `xQueueReceive(syscall_queue, ..., portMAX_DELAY)`. Evento: `diag_task` llama `sys_log_event("Prueba")` → arma `syscall_req_t{SYS_LOG_EVENT, log_msg, done_sem = NULL}` → `xQueueSend(syscall_queue, &req, portMAX_DELAY)`.
+Condición inicial: `vvi_task` Blocked (retardo), `diag_task` Running, `kernel_task` Blocked en `xQueueReceive(syscall_queue, ..., portMAX_DELAY)`. Evento: `diag_task` llama `sys_log_event("Prueba")` → arma una solicitud con semáforo de respuesta → `xQueueSend(syscall_queue, &ptr, portMAX_DELAY)`.
 
 | Tarea | Estado previo | Estado final | Justificación / mecanismo de OS |
 |---|---|---|---|
-| `kernel_task` (Pri 4) | Blocked | **Running** | `xQueueSend` copia la struct al buffer de la cola y revisa `xTasksWaitingToReceive`; ahí está `kernel_task`. La mueve a `pxReadyTasksLists[4]`. Como 4 > 1, la propia API ejecuta `queueYIELD_IF_USING_PREEMPTION()` **antes de retornar** a `diag_task`. El kernel guarda el contexto de `diag_task` (a mitad de `xQueueSend`) y restaura el de `kernel_task`, que sale de `xQueueReceive` con `pdTRUE` y entra al `switch`. |
-| `diag_task` (Pri 1) | Running | **Ready** | Expulsada dentro de su propia llamada al sistema. No está Blocked: `done_sem == NULL`, así que `sys_log_event` no espera respuesta. Volverá a Running cuando `kernel_task` vuelva a bloquearse. |
+| `kernel_task` (Pri 4) | Blocked | **Running** | `xQueueSend` copia el puntero a la solicitud al buffer de la cola y revisa `xTasksWaitingToReceive`; ahí está `kernel_task`. La mueve a `pxReadyTasksLists[4]`. Como 4 > 1, la propia API ejecuta `queueYIELD_IF_USING_PREEMPTION()` **antes de retornar** a `diag_task`. El kernel guarda el contexto de `diag_task` (a mitad de `xQueueSend`) y restaura el de `kernel_task`, que sale de `xQueueReceive` con `pdTRUE` y entra al `switch`. |
+| `diag_task` (Pri 1) | Running | **Ready** | Expulsada dentro de su propia llamada al sistema. Tras encolar, espera en su semáforo `done_sem` hasta que `kernel_task` termina de registrar el evento; luego vuelve a Ready. |
 | `vvi_task` (Pri 3) | Blocked | Blocked | En el modelo del enunciado sigue cumpliendo su retardo. (Estrictamente, el `vTaskDelay(250)` de t = 201 ms vence en t ≈ 451 ms; en el código real la tarea habría despertado, hecho `sys_kick_watchdog()` y vuelto a bloquearse en `sys_wait_sensing()`. En ambos casos está Blocked y no compite por la CPU.) |
 
 **Cadena de eventos y quién imprime:**
 
 ```
 t=500  diag_task    sys_log_event("Prueba")
-                    └─ xQueueSend()            copia req → syscall_queue
+                    └─ xQueueSend()            puntero a req → syscall_queue
                        └─ kernel_task pasa a Ready (pri 4 > 1) → yield
 t=500+ kernel_task  xQueueReceive() retorna req
                     switch (SYS_LOG_EVENT) → Serial.printf("[KERNEL LOG @ ...] Prueba")
@@ -277,7 +277,7 @@ GPIO4 ↑ ──► sense_isr_handler
                              Diag_Task: Ready ─► Running (reanuda dummy_counter++)
 ```
 
-Presupuesto de latencia (estimado, ESP32 a 240 MHz, tick 1 kHz):
+Presupuesto de latencia ilustrativo (estimación, no medición):
 
 | Etapa | Tiempo típico |
 |---|---|
@@ -287,13 +287,13 @@ Presupuesto de latencia (estimado, ESP32 a 240 MHz, tick 1 kHz):
 | `xSemaphoreGive(done_sem)` + `xQueueReceive` + context switch #2 (Kernel → VVI) | 3–6 µs |
 | **Total hasta que `vvi_controller_task` evalúa `if (sensed)`** | **≈ 10–15 µs** |
 
-Está muy por debajo de los 120 µs exigidos **solo si** el cambio de contexto se solicita desde la ISR. Si no (pregunta 2), el peor caso sube a un periodo de tick completo (1000 µs).
+La suma estimada es menor que 120 µs, pero **no demuestra** el cumplimiento del límite: se necesita instrumentación y medición de peor caso en hardware. Si no (pregunta 2), el peor caso sube a un periodo de tick completo (1000 µs).
 
 ### Preguntas analíticas
 
 **1. ¿Qué función de la API de FreeRTOS solicita explícitamente el cambio de contexto desde la ISR?**
 
-`portYIELD_FROM_ISR(xHigherPriorityTaskWoken)` (línea 35 de `syscalls.cpp`). Es la variante segura para interrupciones de `taskYIELD()`. En el port Xtensa de ESP-IDF no ejecuta el cambio “ahí mismo”: marca un *yield* pendiente (`_frxt_setup_switch`) y el cambio de contexto se realiza en la salida de la interrupción, justo antes de restaurar el contexto de la tarea interrumpida. Así el kernel elige a quién restaurar (la tarea despertada, no la interrumpida) con un solo guardado/restauración. Su complemento es `xSemaphoreGiveFromISR`, que es la que realmente mueve a la tarea de Blocked a Ready; `portYIELD_FROM_ISR` solo decide si esa transición se materializa de inmediato.
+`portYIELD_FROM_ISR(woken)` en `syscalls.cpp`. Es la variante segura para interrupciones de `taskYIELD()`. En el port Xtensa de ESP-IDF no ejecuta el cambio “ahí mismo”: marca un *yield* pendiente (`_frxt_setup_switch`) y el cambio de contexto se realiza en la salida de la interrupción, justo antes de restaurar el contexto de la tarea interrumpida. Así el kernel elige a quién restaurar (la tarea despertada, no la interrumpida) con un solo guardado/restauración. Su complemento es `xSemaphoreGiveFromISR`, que es la que realmente mueve a la tarea de Blocked a Ready; `portYIELD_FROM_ISR` solo decide si esa transición se materializa de inmediato.
 
 **2. Propósito de `xHigherPriorityTaskWoken` y consecuencias de omitir su evaluación.**
 
@@ -311,8 +311,8 @@ Pasar siempre `pdTRUE` funcionaría, pero añadiría una conmutación inútil a 
 
 Es un bloqueo en dos niveles con **semáforos binarios** (`xSemaphoreCreateBinary`, que en FreeRTOS es una cola de longitud 1 y tamaño de elemento 0):
 
-1. La tarea de usuario construye `syscall_req_t{SYS_WAIT_SENSING, timeout_ms, done_sem = xSemaphoreCreateBinary()}` y lo envía con `xQueueSend(syscall_queue, &req, portMAX_DELAY)`. Esto normalmente no bloquea (la cola tiene 10 espacios) pero sí despierta a `KernelService`, que la expulsa de inmediato (pri máxima).
-2. Cuando recupera la CPU, llama `xSemaphoreTake(req.done_sem, portMAX_DELAY)`. El semáforo recién creado está en 0. Internamente `xQueueSemaphoreTake` → `vTaskPlaceOnEventList(&xTasksWaitingToReceive, portMAX_DELAY)` → `prvAddCurrentTaskToDelayedList`, que **saca al TCB de `pxReadyTasksLists[3]`** y lo cuelga de la lista de espera del semáforo (y, por ser `portMAX_DELAY` con `INCLUDE_vTaskSuspend`, de `xSuspendedTaskList` en vez de la lista de retardo: espera indefinida). Después ejecuta `portYIELD_WITHIN_API()` para ceder la CPU. Ese es el instante en que `VVI_Task` pasa a **Blocked**; la función que la deja ahí es `vTaskPlaceOnEventList` (llamada desde `xQueueSemaphoreTake`).
+1. La tarea de usuario construye `syscall_req_t{SYS_WAIT_SENSING, timeout_ms, done_sem}` y envía un **puntero** con `xQueueSend(syscall_queue, &ptr, portMAX_DELAY)`. Esto normalmente no bloquea (la cola tiene 10 espacios) pero sí despierta a `KernelService`, que la expulsa de inmediato (pri máxima).
+2. Cuando recupera la CPU, llama `xSemaphoreTake(req.done_sem, portMAX_DELAY)`. El semáforo de completado está en 0. Internamente `xQueueSemaphoreTake` → `vTaskPlaceOnEventList(&xTasksWaitingToReceive, portMAX_DELAY)` → `prvAddCurrentTaskToDelayedList`, que **saca al TCB de `pxReadyTasksLists[3]`** y lo cuelga de la lista de espera del semáforo (y, por ser `portMAX_DELAY` con `INCLUDE_vTaskSuspend`, de `xSuspendedTaskList` en vez de la lista de retardo: espera indefinida). Después ejecuta `portYIELD_WITHIN_API()` para ceder la CPU. Ese es el instante en que `VVI_Task` pasa a **Blocked**; la función que la deja ahí es `vTaskPlaceOnEventList` (llamada desde `xQueueSemaphoreTake`).
 3. Mientras tanto `KernelService` ejecuta `xSemaphoreTake(sense_event_sem, pdMS_TO_TICKS(timeout_ms))` y **también se bloquea**, esta vez con vencimiento: su TCB va a `pxDelayedTaskList` (tick actual + 750) y a la lista de espera de `sense_event_sem`.
 4. Dos caminos la despiertan: la ISR (`xSemaphoreGiveFromISR`) o el tick que alcanza el vencimiento (`xTaskIncrementTick` la mueve a Ready y `xSemaphoreTake` retorna `pdFALSE`). En ambos casos el kernel hace `xSemaphoreGive(req.done_sem)`, que saca a `VVI_Task` de la lista de espera y la devuelve a Ready; `xSemaphoreTake` retorna en la tarea de usuario, esta borra el semáforo y regresa `req.result.success`.
 
@@ -328,20 +328,20 @@ VVI_Task (usuario)                          KernelService (kernel)
 req = {SYS_PACE_PULSE,
        args.pulse_width_us = 500,
        done_sem = nuevo semáforo}
-xQueueSend(syscall_queue, &req)  ── copia por valor (sizeof(syscall_req_t)) ──►  buffer de la cola
-   KernelService → Ready → Running                                             xQueueReceive(&req) copia a su pila
+xQueueSend(syscall_queue, &ptr) ── copia puntero ──► buffer de la cola
+   KernelService → Ready → Running                                             xQueueReceive(&ptr) obtiene la misma solicitud
 xSemaphoreTake(done_sem) → Blocked                                             switch: SYS_PACE_PULSE
                                                                                100 ≤ 500 ≤ 2000 → válido
                                                                                digitalWrite(5, HIGH)
                                                                                delayMicroseconds(500)   ← a prioridad máxima
                                                                                digitalWrite(5, LOW)
-                                                                               req.result.success = true  (copia del kernel)
+                                                                               req->result.success = true  (solicitud del llamante)
    VVI_Task → Ready ◄──────────────────────────────────────────────────────── xSemaphoreGive(req.done_sem)
 vSemaphoreDelete(done_sem)                                                     xQueueReceive → Blocked
 return req.result.success
 ```
 
-Los parámetros viajan **dentro de la struct copiada a la cola**: `xQueueSend` copia los bytes de `req` al almacenamiento interno de `syscall_queue` y `xQueueReceive` los copia a la variable local `req` del kernel. El único dato que ambas copias comparten es el `SemaphoreHandle_t done_sem`, porque es un puntero al mismo objeto; por eso el kernel puede despertar exactamente a la tarea que hizo la petición.
+La cola transporta **un puntero** a la solicitud local del llamante. El llamante espera en `done_sem`, de modo que la solicitud sigue viva hasta que `KernelService` escribe `result` y libera el semáforo. Así el valor de retorno llega a la tarea médica.
 
 Por qué no escribir el GPIO directamente desde la tarea médica:
 
@@ -352,14 +352,16 @@ Por qué no escribir el GPIO directamente desde la tarea médica:
 
 El costo son dos conmutaciones de contexto adicionales (~5 µs) entre la decisión de estimular y el flanco de subida en GPIO 5.
 
-### Hallazgos al leer el código (observaciones, sin modificar los archivos de la práctica)
+### Correcciones y límites del código entregado
 
-1. **`req.result` nunca llega a la tarea de usuario.** La cola transporta la struct **por valor**, así que `req.result.success = ...` se escribe en la copia local de `kernel_service_task` y no en la `req` del llamante. Como los inicializadores designados ponen en cero los campos no mencionados, `sys_wait_sensing()` y `sys_pace_pulse()` retornan **siempre `false`**: al pulsar el botón el kernel sí despierta antes (la ventana se acorta), pero `vvi_controller_task` imprime “Escape agotado” y estimula en vez de inhibir. La corrección es encolar un puntero a la struct (como se hizo en la Práctica 2) o devolver el resultado por una cola de respuesta.
-2. **`esp_task_wdt_reset()` sin suscripción.** Ninguna tarea llama `esp_task_wdt_add`, así que el reset retorna `ESP_ERR_NOT_FOUND` y el TWDT no vigila realmente a `KernelService`.
-3. **El despachador se bloquea en `SYS_WAIT_SENSING`** (ver pregunta 3): durante la ventana de escucha las demás syscalls quedan encoladas.
-4. **Un flanco durante el VRP se “guarda”.** `sense_event_sem` es binario y la ISR lo libera en cualquier flanco, incluso durante `sys_sleep_ms(250)` o durante el propio pulso. Nadie lo drena antes de la siguiente `SYS_WAIT_SENSING`, así que ese token residual hace que la próxima ventana de escucha termine de inmediato y acorte el intervalo de escape (*oversensing*). Corrección: `xSemaphoreTake(sense_event_sem, 0)` al abrir cada ventana.
-5. **`Diag_Task` deja sin CPU a la tarea Idle del Core 1.** Al ser un busy-wait de prioridad 1 que nunca se bloquea, la Idle (prioridad 0) del Core 1 no corre; es la encargada de liberar la memoria de tareas borradas (`vTaskDelete(NULL)` en `loop()`), así que ese TCB/pila nunca se recupera. En un sistema real la tarea de diagnóstico debería ceder con un `vTaskDelay` periódico.
-6. **`sys_log_event` pasa `const char *` sin copiar.** Funciona porque todos los mensajes son literales; con un buffer en pila el kernel imprimiría basura.
+- Se corrigió la cola de syscalls para transportar punteros a solicitudes y devolver los resultados al llamante. Esto permite que la onda R inhiba el pulso.
+- La función de inicio pasó a llamarse `vvi_sys_init` para evitar una colisión de símbolo con lwIP en Arduino ESP32 core 3.3.7, detectada al enlazar en Wokwi.
+- `KernelService` ahora se suscribe al Task WDT. También se drena el semáforo de sensado al abrir cada ventana para descartar flancos del VRP.
+- Se reutilizó el anillo de telemetría de la Práctica 2: el mensaje se copia antes de que el llamante termine, evitando punteros a buffers temporales.
+- El despachador aún espera dentro de `SYS_WAIT_SENSING`, por lo que retrasa otras syscalls durante la escucha. `Diag_Task` mantiene una carga continua para mostrar preempción y puede impedir que corra Idle en Core 1. Estos son límites de la demostración.
+- El POST de `bootstrap.cpp` es simulado. La estimación de latencia anterior no es una medición de Wokwi ni certificación clínica.
+
+Las capturas de Wokwi están en `evidencias/`. El resultado de cada intento y las pruebas pendientes se detallan en `../VALIDACION_WOKWI.md`.
 
 ---
 

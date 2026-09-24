@@ -15,7 +15,7 @@ extern "C" {
  * colas internas y el despachador viven en syscalls.cpp.
  */
 
-void     sys_init(void);
+void     vvi_sys_init(void);
 uint64_t sys_get_time_us(void);
 bool     sys_wait_sensing(uint32_t timeout_ms);
 bool     sys_pace_pulse(uint32_t width_us);

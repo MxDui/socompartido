@@ -62,7 +62,7 @@ void setup() {
     delay(1000);
 
     bootstrap_init();
-    sys_init();
+    vvi_sys_init();
 
     xTaskCreatePinnedToCore(vvi_controller_task, "VVI_Task",
                             4096, NULL, 2, NULL, 0);

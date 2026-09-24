@@ -98,7 +98,7 @@ Sin estas primitivas, la ISR tendría que “avisar” a la tarea médica tocand
 
 ### Qué es público y qué es interno
 
-**`syscalls.h` (aplicación):** `sys_init`, `sys_get_time_us`, `sys_wait_sensing`, `sys_pace_pulse`, `sys_log_event`, `sys_kick_watchdog`, `sys_sleep_ms`.
+**`syscalls.h` (aplicación):** `vvi_sys_init`, `sys_get_time_us`, `sys_wait_sensing`, `sys_pace_pulse`, `sys_log_event`, `sys_kick_watchdog`, `sys_sleep_ms`.
 
 **`syscalls.cpp` (kernel):** pines, ISR, cola, semáforos, `syscall_req_t`, anillo de log, `kernel_service_task`, generación física del pulso.
 
@@ -215,7 +215,7 @@ Dejar `PACE_PULSE_US` en `500` salvo el escenario 4.
 
 ### Evidencias
 
-Copiar del monitor serie los bloques `[KERNEL LOG @ <us>]` de cada escenario y, si se usa hardware, una foto del montaje (botón en GPIO 4, LED en GPIO 5).
+Las capturas de la carga del circuito y del servidor de compilación están en `evidencias/`. El monitor serie y las pruebas del botón siguen pendientes; ver `../VALIDACION_WOKWI.md`. Si se usa hardware, añadir una foto del montaje (botón en GPIO 4, LED en GPIO 5).
 
 ---
 

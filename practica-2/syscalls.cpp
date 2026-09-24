@@ -71,7 +71,7 @@ static void complete_req(syscall_req_t *req);
 /*  API publica: empaquetan la solicitud y bloquean hasta el resultado        */
 /* -------------------------------------------------------------------------- */
 
-void sys_init(void) {
+void vvi_sys_init(void) {
     if (syscall_queue != NULL) {
         return;
     }

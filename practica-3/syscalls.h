@@ -1,26 +1,30 @@
-#pragma once
+#ifndef SYSCALLS_H
+#define SYSCALLS_H
 
-#include <Arduino.h>
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-#define PIN_VENTRICLE_SENSE 4
-#define PIN_VENTRICLE_PACE  5
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-typedef enum {
-  SYS_WAIT_EVENT = 1,
-  SYS_GET_TIME_US,
-  SYS_WAIT_SENSING,
-  SYS_PACE_PULSE,
-  SYS_LOG_EVENT,
-  SYS_KICK_WATCHDOG
-} syscall_id_t;
+/*
+ * Interfaz publica de syscalls (espacio de aplicacion).
+ *
+ * La logica medica SOLO puede usar estas funciones. GPIO, ISR, WDT,
+ * colas internas y el despachador viven en syscalls.cpp.
+ */
 
-// API publica para las tareas de usuario
-void sys_init(void);
+void     vvi_sys_init(void);
 uint64_t sys_get_time_us(void);
-void sys_sleep_ms(uint32_t ms);
-bool sys_wait_sensing(uint32_t timeout_ms);
-bool sys_pace_pulse(uint32_t pulse_width_us);
-void sys_log_event(const char *msg);
-void sys_kick_watchdog(void);
+bool     sys_wait_sensing(uint32_t timeout_ms);
+bool     sys_pace_pulse(uint32_t width_us);
+void     sys_log_event(const char *msg);
+void     sys_kick_watchdog(void);
+void     sys_sleep_ms(uint32_t ms);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* SYSCALLS_H */
